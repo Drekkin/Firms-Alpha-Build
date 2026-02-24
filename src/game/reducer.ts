@@ -14,6 +14,12 @@ import {
   applyMergerDecision,
 } from "./engine";
 
+
+function canHumanPlace(state: GameState): boolean {
+  const blockingModal = state.ui.modal && ["FOUND_SELECT", "SURVIVOR_CHOICE", "MERGER", "BUY"].includes(state.ui.modal.kind);
+  return state.currentPlayer === 0 && state.ui.phase === "HUMAN_PLACE" && !blockingModal;
+}
+
 export function reducer(state: GameState, action: Action): GameState {
   // clone shallow (we mutate inside engine for simplicity in alpha)
   const next: GameState = structuredClone(state);
@@ -31,11 +37,17 @@ export function reducer(state: GameState, action: Action): GameState {
       return next;
 
     case "HOVER_TILE":
+      if (!canHumanPlace(next)) {
+        next.ui.hoveredTileId = null;
+        next.ui.preview = null;
+        return next;
+      }
       next.ui.hoveredTileId = action.tileId;
       next.ui.preview = action.tileId ? computePlacementPreview(next, action.tileId) : null;
       return next;
 
     case "DRAG_START":
+      if (!canHumanPlace(next)) return next;
       next.ui.draggingTileId = action.tileId;
       return next;
 
@@ -43,6 +55,10 @@ export function reducer(state: GameState, action: Action): GameState {
       const dragging = next.ui.draggingTileId;
       next.ui.draggingTileId = null;
       if (!dragging) return next;
+      if (!canHumanPlace(next)) {
+        next.log.push("Drop ignored: not in human placement phase.");
+        return next;
+      }
       const tile = next.players[0].hand.find((t) => t.id === dragging);
       if (!tile) return next;
       if (tile.row !== action.row || tile.col !== action.col) {
@@ -63,6 +79,7 @@ export function reducer(state: GameState, action: Action): GameState {
     }
 
     case "SURVIVOR_SELECT":
+      if (next.currentPlayer !== 0 || next.ui.phase !== "HUMAN_MERGER" || next.ui.modal?.kind !== "SURVIVOR_CHOICE") return next;
       chooseSurvivor(next, 0, action.firmId);
       return next;
 

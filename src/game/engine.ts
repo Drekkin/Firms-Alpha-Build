@@ -87,7 +87,7 @@ export function computePlacementPreview(state: GameState, tileId: string): Place
   const cell = state.board[row][col];
   if (cell.occupied) return { tileId, row, col, outcome: "ILLEGAL", details: "Cell already occupied", involvedFirms: [], survivorTie: false };
 
-  const firmsTouch = touchingFirms(state, row, col);
+  const firmsTouch = touchingFirms(state, row, col).filter((f) => state.firms[f].active);
   if (firmsTouch.length >= 2) {
     // illegal if any touching firm is safe
     const anySafe = firmsTouch.some((f) => state.firms[f].safe);
@@ -133,6 +133,19 @@ function firmRecalc(state: GameState, firmId: FirmId): void {
   if (firm.active && !firm.safe && size >= SAFE_SIZE) {
     firm.safe = true;
     state.log.push(`${firmId} is now SAFE (size ${size}).`);
+  }
+}
+
+function recalculateFirmsFromBoard(state: GameState): void {
+  for (const firmId of FIRM_ORDER) {
+    const firm = state.firms[firmId];
+    if (!firm.active) {
+      firm.size = 0;
+      firm.safe = false;
+      continue;
+    }
+    firmRecalc(state, firmId);
+    firm.safe = firm.size >= SAFE_SIZE;
   }
 }
 
@@ -228,7 +241,7 @@ export function placeTile(state: GameState, playerId: number, tileId: string): {
         for (const pos of cluster) state.board[pos.r][pos.c].firmId = firmId;
       }
     }
-    firmRecalc(state, firmId);
+    recalculateFirmsFromBoard(state);
     state.log.push(`${p.name} placed ${tileId}: Grew ${firmId} (size ${state.firms[firmId].size}).`);
     if (playerId === 0) {
       state.ui.phase = "HUMAN_VOTE";
@@ -263,6 +276,7 @@ export function placeTile(state: GameState, playerId: number, tileId: string): {
 
     const ctx: MergerCtx = {
       initiatorId: playerId,
+      triggerTile: { row: tile.row, col: tile.col },
       survivor,
       survivorChoices,
       acquired: survivor ? involved.filter((f)=>f!==survivor) : involved.filter((f)=>!tied.includes(f)),
@@ -276,7 +290,7 @@ export function placeTile(state: GameState, playerId: number, tileId: string): {
     // Build decision order lists later once survivor known; for now store ctx and open survivor choice if needed
     state.ui.phase = "HUMAN_MERGER";
     if (!ctx.survivor) {
-      state.ui.modal = { kind: "SURVIVOR_CHOICE", choices: survivorChoices };
+      state.ui.modal = { kind: "SURVIVOR_CHOICE", choices: survivorChoices, ctx };
       setTimer(state, "Choose Survivor", "SURVIVOR_CHOICE");
       state.log.push(`${p.name} placed ${tileId}: Merger (choose survivor).`);
     } else {
@@ -298,7 +312,6 @@ export function foundFirm(state: GameState, playerId: number, firmId: FirmId, ti
   if (firm.active) return;
   // compute cluster: the placed tile is unincorporated and touches at least one unincorp tile; cluster includes it plus connected unincorp
   // ensure placed tile is occupied and unincorp
-  const tile = state.players[playerId].hand.find((t)=>t.id===tileId); // may not exist; tile already placed earlier
   const row = parseInt(tileId.slice(1),10)-1;
   const col = tileId.charCodeAt(0)-65;
   const cluster = findConnectedUnincorpCluster(state, row, col);
@@ -308,9 +321,7 @@ export function foundFirm(state: GameState, playerId: number, firmId: FirmId, ti
     state.board[pos.r][pos.c].firmId = firmId;
   }
   firm.active = true;
-  firm.safe = false;
-  firm.size = cluster2.length;
-  if (!firm.safe && firm.size >= SAFE_SIZE) firm.safe = true;
+  recalculateFirmsFromBoard(state);
 
   // founder free share
   if (firm.bankShares > 0) {
@@ -522,41 +533,16 @@ export function runBots(state: GameState): void {
 export function chooseSurvivor(state: GameState, playerId: number, survivor: FirmId): void {
   const modal = state.ui.modal;
   if (!modal || modal.kind !== "SURVIVOR_CHOICE") return;
+  if (modal.ctx.initiatorId !== playerId) return;
   if (!modal.choices.includes(survivor)) return;
 
-  // we must reconstruct merger context based on last placement preview; store temporary: find the most recent MERGE preview in log? Not robust.
-  // Instead, we keep it simple: modal choices are tied set; survivor is chosen; the acquired are all adjacent firms other than survivor to the placement tile.
-  // Find the last placed tile by initiator: we do not store it; for alpha, assume the merge was triggered at a location where the placed tile is unincorp and touches firms.
-  // We'll scan for any unincorp occupied tile that touches >=2 firms and use the most recent (rough but workable in alpha).
-  let trigger: { r: number; c: number } | null = null;
-  for (let r=0;r<BOARD_ROWS;r++){
-    for (let c=0;c<BOARD_COLS;c++){
-      const cell = state.board[r][c];
-      if (!cell.occupied) continue;
-      if (cell.firmId !== null) continue;
-      const tf = touchingFirms(state, r, c);
-      if (tf.length>=2) trigger = { r, c };
-    }
-  }
-  if (!trigger) {
-    state.log.push("Error: could not locate merger trigger tile.");
-    state.ui.modal = null;
-    state.ui.phase = "HUMAN_VOTE";
-    setTimer(state, "Vote Window", "HUMAN_VOTE");
-    return;
-  }
-  const involved = touchingFirms(state, trigger.r, trigger.c);
-  const acquired = involved.filter((f)=>f!==survivor);
   const ctx: MergerCtx = {
-    initiatorId: playerId,
+    ...modal.ctx,
     survivor,
     survivorChoices: modal.choices,
-    acquired,
-    decisionOrderByAcquired: {} as any,
-    acquiredIndex: 0,
-    orderIndex: 0,
-    currentTotals: { tradedIn: 0, tradeOut: 0, sold: 0, held: 0, tradeCapped: false },
-    remainingShares: {},
+    acquired: modal.ctx.survivorChoices.filter((f) => f !== survivor).concat(
+      modal.ctx.acquired.filter((f) => f !== survivor)
+    ),
   };
   initMergerCtx(state, ctx);
   state.ui.modal = { kind: "MERGER", ctx };
@@ -710,18 +696,7 @@ export function applyMergerDecision(
 
 function finalizeMerger(state: GameState, ctx: MergerCtx): void {
   const survivor = ctx.survivor!;
-  // find trigger tile: unincorp occupied tile touching >=2 firms including survivor
-  let trigger: { r: number; c: number } | null = null;
-  for (let r=0;r<BOARD_ROWS;r++){
-    for (let c=0;c<BOARD_COLS;c++){
-      const cell = state.board[r][c];
-      if (!cell.occupied) continue;
-      if (cell.firmId !== null) continue;
-      const tf = touchingFirms(state, r, c);
-      if (tf.includes(survivor) && tf.some((f)=>ctx.acquired.includes(f))) trigger = { r, c };
-    }
-  }
-  if (trigger) state.board[trigger.r][trigger.c].firmId = survivor;
+  state.board[ctx.triggerTile.row][ctx.triggerTile.col].firmId = survivor;
 
   for (const acq of ctx.acquired) {
     // convert tiles
@@ -733,7 +708,7 @@ function finalizeMerger(state: GameState, ctx: MergerCtx): void {
   }
   // recalc survivor size & safe
   state.firms[survivor].active = true;
-  firmRecalc(state, survivor);
+  recalculateFirmsFromBoard(state);
   state.log.push(`${survivor} now size ${state.firms[survivor].size}.`);
 }
 
@@ -878,4 +853,49 @@ export function handleTimeout(state: GameState): void {
     runBots(state);
     return;
   }
+}
+
+export function runMergeRegressionScenario(): { ok: boolean; details: string[] } {
+  const state = createInitialState("merge-regression");
+  state.players[0].hand = [{ id: "B2", row: 1, col: 1 }];
+  state.tileBag = [];
+  state.currentPlayer = 0;
+  state.ui.phase = "HUMAN_PLACE";
+
+  state.firms.ALPHA.active = true;
+  state.firms.BETA.active = true;
+
+  state.board[1][0] = { occupied: true, firmId: "ALPHA" };
+  state.board[0][1] = { occupied: true, firmId: "BETA" };
+  state.board[0][0] = { occupied: true, firmId: "ALPHA" };
+  state.board[0][2] = { occupied: true, firmId: "BETA" };
+
+  recalculateFirmsFromBoard(state);
+  const place = placeTile(state, 0, "B2");
+  if (!place.ok) return { ok: false, details: [`Placement failed: ${place.error}`] };
+
+  if (state.ui.modal?.kind === "SURVIVOR_CHOICE") {
+    chooseSurvivor(state, 0, state.ui.modal.choices[0]);
+  }
+
+  while (state.ui.modal?.kind === "MERGER") {
+    const ctx = state.ui.modal.ctx;
+    const acq = ctx.acquired[ctx.acquiredIndex];
+    const order = ctx.decisionOrderByAcquired[acq] ?? [];
+    const actor = order[ctx.orderIndex];
+    if (actor === undefined) break;
+    const res = applyMergerDecision(state, actor, 0, 0);
+    if (!res.ok) return { ok: false, details: [`Merger decision failed: ${res.error}`] };
+  }
+
+  const occupied = state.board[1][1].firmId;
+  const survivor = occupied;
+  const details = [
+    `Trigger tile firm: ${occupied}`,
+    `Alpha active=${state.firms.ALPHA.active} size=${state.firms.ALPHA.size}`,
+    `Beta active=${state.firms.BETA.active} size=${state.firms.BETA.size}`,
+    `Survivor safe=${survivor ? state.firms[survivor].safe : "n/a"}`,
+  ];
+
+  return { ok: Boolean(survivor), details };
 }

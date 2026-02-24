@@ -13,10 +13,12 @@ export default function Board({
   state,
   onDropCell,
   onHoverCellFirm,
+  canInteract,
 }: {
   state: GameState;
   onDropCell: (row: number, col: number) => void;
   onHoverCellFirm: (firmId: FirmId | null) => void;
+  canInteract: boolean;
 }) {
   const w = PAD + 12 * CELL + 2;
   const h = PAD + 9 * CELL + 2;
@@ -28,7 +30,7 @@ export default function Board({
   const hoveredFirm = (state.ui.preview?.involvedFirms.length === 1 && state.ui.preview.outcome==="GROW") ? state.ui.preview.involvedFirms[0] : null;
 
   return (
-    <div style={{ position: "relative" }}>
+    <div style={{ position: "relative", pointerEvents: canInteract ? "auto" : "none", opacity: canInteract ? 1 : 0.92 }}>
       <svg width={w} height={h} style={{ display: "block" }}>
         {Array.from({ length: 12 }).map((_, c) => (
           <text key={c} x={PAD + c * CELL + CELL / 2} y={18} fill="#8b93a7" fontSize="12" textAnchor="middle">

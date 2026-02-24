@@ -21,6 +21,8 @@ export default function App() {
     ? FIRM_ORDER.reduce((sum, firmId) => sum + buyModal.selections[firmId] * priceForFirm(state.firms[firmId]), 0)
     : 0;
 
+  const boardInteractionEnabled = state.ui.phase === "HUMAN_PLACE" && state.currentPlayer === 0;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
       <TopBar state={state} onOpenSettings={() => dispatch({ type: "OPEN_SETTINGS" })} />
@@ -31,6 +33,7 @@ export default function App() {
             state={state}
             onDropCell={(row, col) => dispatch({ type: "DRAG_END", row, col })}
             onHoverCellFirm={() => {}}
+            canInteract={boardInteractionEnabled}
           />
         </div>
 
