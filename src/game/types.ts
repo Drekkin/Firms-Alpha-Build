@@ -108,7 +108,7 @@ export interface UIState {
     | { kind: "FOUND_SELECT"; tileId: string; choices: FirmId[] }
     | { kind: "SURVIVOR_CHOICE"; choices: FirmId[] }
     | { kind: "MERGER"; ctx: MergerCtx }
-    | { kind: "BUY"; remainingBuys: number }
+    | { kind: "BUY"; selections: Record<FirmId, number> }
     | { kind: "VOTE"; ctx: VoteCtx }
     | { kind: "ENDGAME"; standings: { name: string; cash: number }[] };
 

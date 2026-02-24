@@ -6,15 +6,12 @@ export default function BottomBar({
   state,
   onDragStart,
   onHoverTile,
-  onEndBuy,
 }: {
   state: GameState;
   onDragStart: (tileId: string) => void;
   onHoverTile: (tileId: string | null) => void;
-  onEndBuy: () => void;
 }) {
   const you = state.players[0];
-  const showCashSelf = true;
 
   return (
     <div style={{ borderTop: "1px solid #24262c", padding: 10, display: "flex", gap: 14, alignItems: "center" }}>
@@ -37,14 +34,6 @@ export default function BottomBar({
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
         <TimerPill active={state.ui.timer.active} endsAt={state.ui.timer.endsAt} label={state.ui.timer.label} />
-        {state.ui.phase === "HUMAN_BUY" && (
-          <button
-            onClick={onEndBuy}
-            style={{ background: "#1a1c22", color: "#eaeaea", border: "1px solid #2a2d35", borderRadius: 12, padding: "8px 10px" }}
-          >
-            End Buy / End Turn
-          </button>
-        )}
       </div>
     </div>
   );

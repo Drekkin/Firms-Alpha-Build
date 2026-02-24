@@ -2,6 +2,7 @@ import { Action } from "./actions";
 import { GameState } from "./types";
 import {
   buyShares,
+  confirmBuySelection,
   canCallVote,
   chooseSurvivor,
   computePlacementPreview,
@@ -10,13 +11,8 @@ import {
   handleTimeout,
   placeTile,
   resolveVote,
-  runBots,
-  startHumanBuy,
-  startHumanTurn,
-  startHumanVoteWindow,
   applyMergerDecision,
 } from "./engine";
-import { FIRM_ORDER } from "./constants";
 
 export function reducer(state: GameState, action: Action): GameState {
   // clone shallow (we mutate inside engine for simplicity in alpha)
@@ -95,20 +91,15 @@ export function reducer(state: GameState, action: Action): GameState {
       return next;
     }
 
-    case "BUY": {
+    case "BUY_SET_QTY": {
       const res = buyShares(next, 0, action.firmId, action.qty);
-      if (!res.ok) next.log.push(`Buy failed: ${res.error}`);
+      if (!res.ok) next.log.push(`Buy selection failed: ${res.error}`);
       return next;
     }
 
-    case "END_BUY": {
-      // end buy phase now
-      // engine endBuyPhase is internal; easiest: trigger timeout behavior for buy (it ends turn)
-      // but here we want immediate end without buying further.
-      // Use handleTimeout but it logs; instead simulate: runBots via setting BOT_TURN.
-      // We'll reuse: start bot phase by calling timeout on BUY which ends buy.
-      // Minimal: call handleTimeout after setting timer step
-      handleTimeout(next); // if in buy it ends
+    case "BUY_CONFIRM": {
+      const res = confirmBuySelection(next, 0);
+      if (!res.ok) next.log.push(`Buy failed: ${res.error}`);
       return next;
     }
 

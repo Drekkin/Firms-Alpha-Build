@@ -357,32 +357,72 @@ export function resolveVote(state: GameState, ctx: VoteCtx): void {
     checkEnd(state);
   }
   state.ui.modal = null;
-  state.ui.phase = "HUMAN_BUY";
-  state.ui.modal = { kind: "BUY", remainingBuys: 3 };
-  setTimer(state, "Buy Shares", "HUMAN_BUY");
+  startHumanBuy(state);
 }
 
 export function buyShares(state: GameState, playerId: number, firmId: FirmId, qty: number): { ok: boolean; error?: string } {
   const p = state.players[playerId];
   const firm = state.firms[firmId];
-  if (!firm.active) return { ok: false, error: "Firm inactive." };
-  if (qty <= 0) return { ok: true };
   const buyModal = state.ui.modal;
   if (!buyModal || buyModal.kind !== "BUY") return { ok: false, error: "Not in buy phase." };
-  if (qty > buyModal.remainingBuys) return { ok: false, error: "Exceeds remaining buys." };
-  if (firm.bankShares <= 0) return { ok: false, error: "No shares available." };
 
-  const price = priceForFirm(firm);
-  const cost = qty * price;
-  if (p.cash < cost) return { ok: false, error: "Insufficient cash." };
+  const nextQty = Math.max(0, qty);
+  if (!firm.active) return { ok: false, error: "Firm inactive." };
+  if (priceForFirm(firm) <= 0) return { ok: false, error: "Firm not purchasable." };
+  if (nextQty > firm.bankShares) return { ok: false, error: "No shares available." };
 
-  const actual = Math.min(qty, firm.bankShares);
-  firm.bankShares -= actual;
-  p.shares[firmId] += actual;
-  p.cash -= actual * price;
-  state.ui.modal = { kind: "BUY", remainingBuys: buyModal.remainingBuys - actual };
-  state.log.push(`${p.name} bought ${actual} share(s) of ${firmId}.`);
-  if (firm.bankShares === 0) state.log.push(`All public shares of ${firmId} have been purchased.`);
+  const nextSelections = { ...buyModal.selections, [firmId]: nextQty };
+  const totalSelected = Object.values(nextSelections).reduce((sum, count) => sum + count, 0);
+  if (totalSelected > 3) return { ok: false, error: "Exceeds remaining buys." };
+
+  const totalCost = Object.entries(nextSelections).reduce((sum, [id, count]) => {
+    if (count <= 0) return sum;
+    const pricedFirm = state.firms[id as FirmId];
+    return sum + priceForFirm(pricedFirm) * count;
+  }, 0);
+  if (totalCost > p.cash) return { ok: false, error: "Insufficient cash." };
+
+  state.ui.modal = { kind: "BUY", selections: nextSelections };
+  return { ok: true };
+}
+
+export function confirmBuySelection(state: GameState, playerId: number): { ok: boolean; error?: string } {
+  const p = state.players[playerId];
+  const modal = state.ui.modal;
+  if (!modal || modal.kind !== "BUY") return { ok: false, error: "Not in buy phase." };
+
+  const entries = Object.entries(modal.selections) as [FirmId, number][];
+  const totalSelected = entries.reduce((sum, [, count]) => sum + count, 0);
+  if (totalSelected === 0) {
+    endBuyPhase(state);
+    return { ok: true };
+  }
+
+  let totalCost = 0;
+  for (const [firmId, qty] of entries) {
+    if (qty <= 0) continue;
+    const firm = state.firms[firmId];
+    if (!firm.active) return { ok: false, error: `${firmId} is inactive.` };
+    if (firm.bankShares < qty) return { ok: false, error: `${firmId} sold out.` };
+    const price = priceForFirm(firm);
+    if (price <= 0) return { ok: false, error: `${firmId} is not purchasable.` };
+    totalCost += price * qty;
+  }
+
+  if (totalCost > p.cash) return { ok: false, error: "Insufficient cash." };
+
+  for (const [firmId, qty] of entries) {
+    if (qty <= 0) continue;
+    const firm = state.firms[firmId];
+    const price = priceForFirm(firm);
+    firm.bankShares -= qty;
+    p.shares[firmId] += qty;
+    p.cash -= qty * price;
+    state.log.push(`${p.name} bought ${qty} share(s) of ${firmId}.`);
+    if (firm.bankShares === 0) state.log.push(`All public shares of ${firmId} have been purchased.`);
+  }
+
+  endBuyPhase(state);
   return { ok: true };
 }
 
@@ -727,7 +767,21 @@ export function startHumanVoteWindow(state: GameState): void {
 
 export function startHumanBuy(state: GameState): void {
   state.ui.phase = "HUMAN_BUY";
-  state.ui.modal = { kind: "BUY", remainingBuys: 3 };
+  const purchasable = Object.values(state.firms).filter((firm) => firm.active && firm.bankShares > 0 && priceForFirm(firm) > 0);
+  if (purchasable.length === 0) {
+    state.log.push("No available shares.");
+    endBuyPhase(state);
+    return;
+  }
+
+  const minPrice = Math.min(...purchasable.map((firm) => priceForFirm(firm)));
+  if (state.players[0].cash < minPrice) {
+    state.log.push("Insufficient funds for purchase.");
+    endBuyPhase(state);
+    return;
+  }
+
+  state.ui.modal = { kind: "BUY", selections: emptyShares() };
   setTimer(state, "Buy Shares", "HUMAN_BUY");
 }
 
@@ -808,9 +862,15 @@ export function handleTimeout(state: GameState): void {
   }
 
   if (phase === "HUMAN_BUY") {
-    // buy 0, end turn
-    endBuyPhase(state);
-    state.log.push("Timer expired — bought 0 shares.");
+    const selected = state.ui.modal?.kind === "BUY"
+      ? Object.values(state.ui.modal.selections).reduce((sum, count) => sum + count, 0)
+      : 0;
+    const res = confirmBuySelection(state, 0);
+    if (!res.ok) {
+      state.log.push(`Buy confirm failed: ${res.error}`);
+      return;
+    }
+    state.log.push(selected > 0 ? "Timer expired — auto-confirmed selected shares." : "Timer expired — auto-confirmed no share purchase.");
     return;
   }
 
