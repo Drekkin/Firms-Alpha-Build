@@ -75,6 +75,7 @@ export interface PlacementPreview {
 
 export interface MergerCtx {
   initiatorId: number;
+  triggerTile: { row: number; col: number };
   survivor: FirmId | null; // null if needs choice
   survivorChoices: FirmId[];
   acquired: FirmId[]; // firms being absorbed
@@ -106,7 +107,7 @@ export interface UIState {
   modal:
     | null
     | { kind: "FOUND_SELECT"; tileId: string; choices: FirmId[] }
-    | { kind: "SURVIVOR_CHOICE"; choices: FirmId[] }
+    | { kind: "SURVIVOR_CHOICE"; choices: FirmId[]; ctx: MergerCtx }
     | { kind: "MERGER"; ctx: MergerCtx }
     | { kind: "BUY"; selections: Record<FirmId, number> }
     | { kind: "VOTE"; ctx: VoteCtx }
