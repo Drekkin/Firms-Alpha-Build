@@ -1,4 +1,4 @@
-import { BOARD_COLS, BOARD_ROWS, DEFAULT_VISIBILITY, END_SIZE, FIRM_ORDER, FIRM_TIERS, HAND_SIZE, SAFE_SIZE, STARTING_CASH, TIMER_MS } from "./constants";
+import { BOARD_COLS, BOARD_ROWS, DEFAULT_VISIBILITY, END_SIZE, FIRM_ORDER, FIRM_TIERS, HAND_SIZE, SAFE_SIZE, STARTING_CASH, TIMER_MS, BOT_STEP_MS } from "./constants";
 import { cloneBoard, findConnectedUnincorpCluster, findFirmTiles, neighbors4, touchingFirms, touchingUnincorp } from "./board";
 import { hashSeed, mulberry32 } from "./rng";
 import { majorityBonus, minorityBonus, priceForFirm } from "./pricing";
@@ -70,6 +70,7 @@ export function createInitialState(seed = "alpha"): GameState {
       settingsOpen: false,
       modal: null,
       timer: { active: true, endsAt: now + TIMER_MS, label: "Place Tile", stepKey: "HUMAN_PLACE" },
+      botTurnState: null,
     },
     log: [
       "Game started (Hidden—Strategic defaults).",
@@ -439,95 +440,147 @@ export function confirmBuySelection(state: GameState, playerId: number): { ok: b
 
 export function endBuyPhase(state: GameState): void {
   state.ui.modal = null;
-  // end turn
   advanceTurn(state);
 }
 
+function setBotStepTimer(state: GameState, botName: string): void {
+  state.ui.timer = { active: true, endsAt: Date.now() + BOT_STEP_MS, label: `${botName} up next`, stepKey: "BOT_STEP" };
+}
+
+function beginBotPhase(state: GameState): void {
+  state.ui.phase = "BOT_TURN";
+  state.ui.modal = null;
+  state.ui.botTurnState = { botOrder: [1, 2, 3], botIndex: 0 };
+  runNextBotTurn(state);
+}
+
 function advanceTurn(state: GameState): void {
-  // after human, run 3 bots then return to human
   if (state.currentPlayer === 0) {
-    state.ui.phase = "BOT_TURN";
-    setTimer(state, "Bots", "BOT_TURN");
-  } else {
-    state.currentPlayer = (state.currentPlayer + 1) % state.players.length;
+    beginBotPhase(state);
+    return;
+  }
+  state.currentPlayer = (state.currentPlayer + 1) % state.players.length;
+}
+
+function pickBotFoundingChoice(state: GameState, choices: FirmId[]): FirmId {
+  const tierRank: Record<string, number> = { B: 0, A: 1, S: 2 };
+  return choices.slice().sort((a, b) => {
+    const byTier = tierRank[state.firms[a].tier] - tierRank[state.firms[b].tier];
+    if (byTier !== 0) return byTier;
+    return FIRM_ORDER.indexOf(a) - FIRM_ORDER.indexOf(b);
+  })[0];
+}
+
+function runBotStockPurchase(state: GameState, playerId: number): void {
+  const bought: Partial<Record<FirmId, number>> = {};
+  let remaining = 3;
+
+  while (remaining > 0) {
+    const active = Object.values(state.firms).filter((f) => f.active && f.bankShares > 0 && priceForFirm(f) > 0);
+    if (active.length === 0) break;
+
+    active.sort((a, b) => priceForFirm(a) - priceForFirm(b) || FIRM_ORDER.indexOf(a.id) - FIRM_ORDER.indexOf(b.id));
+    const choice = active[0];
+    const price = priceForFirm(choice);
+    if (state.players[playerId].cash < price) break;
+
+    choice.bankShares -= 1;
+    state.players[playerId].shares[choice.id] += 1;
+    state.players[playerId].cash -= price;
+    bought[choice.id] = (bought[choice.id] ?? 0) + 1;
+    remaining -= 1;
+
+    if (choice.bankShares === 0) state.log.push(`All public shares of ${choice.id} have been purchased.`);
+  }
+
+  const playerName = state.players[playerId].name;
+  const entries = Object.entries(bought) as [FirmId, number][];
+  if (entries.length === 0) {
+    state.log.push(`${playerName} bought no shares.`);
+    return;
+  }
+
+  for (const [firmId, qty] of entries) {
+    state.log.push(`${playerName} bought ${qty} share${qty === 1 ? "" : "s"} of ${firmId}.`);
   }
 }
 
-export function runBots(state: GameState): void {
-  // simple bots: place first legal non-illegal tile (allow merges), choose random founded firm if needed, buy 0-3 random affordable, call vote if beneficial.
-  const order = [1,2,3];
-  for (const pid of order) {
-    state.currentPlayer = pid;
-    // place tile
-    let placed = false;
-    for (const t of state.players[pid].hand) {
-      const prev = computePlacementPreview(state, t.id);
-      if (!prev || prev.outcome === "ILLEGAL") continue;
-      // bots can merge; if merge requires survivor choice, pick first choice
-      const res = placeTile(state, pid, t.id);
-      if (!res.ok) continue;
-      placed = true;
+function runSingleBotTurn(state: GameState, playerId: number): void {
+  const bot = state.players[playerId];
+  state.currentPlayer = playerId;
+  state.ui.phase = "BOT_TURN";
+  state.ui.modal = null;
 
-      // handle founding choice if opened (bots auto choose lowest tier)
-      if (state.ui.modal?.kind === "FOUND_SELECT") {
-        const choices = state.ui.modal.choices;
-        const pick = choices.sort((a,b)=>state.firms[a].tier.localeCompare(state.firms[b].tier))[0];
-        foundFirm(state, pid, pick, state.ui.modal.tileId);
-      }
-      // handle survivor choice
-      if (state.ui.modal?.kind === "SURVIVOR_CHOICE") {
-        chooseSurvivor(state, pid, state.ui.modal.choices[0]);
-      }
-      // handle merger modal fully (bots auto decide: hold all by default; trade/sell 0)
-      if (state.ui.modal?.kind === "MERGER") {
-        autoResolveMerger(state);
-      }
+  state.log.push(`${bot.name} is taking a turn...`);
 
-      // vote window: bot may call vote if it is top holder
-      for (const firmId of FIRM_ORDER) {
-        if (canCallVote(state, pid, firmId)) {
-          const max = Math.max(...state.players.map((p)=>p.shares[firmId]));
-          if (state.players[pid].shares[firmId] === max) {
-            const vctx: VoteCtx = { firmId, callerId: pid, votes: {} };
-            // bot votes YES; others auto computed in resolveVote
-            vctx.votes[pid] = "YES";
-            resolveVote(state, vctx);
-            break;
-          }
-        }
-      }
+  let placed = false;
+  for (const t of bot.hand) {
+    const prev = computePlacementPreview(state, t.id);
+    if (!prev || prev.outcome === "ILLEGAL") continue;
 
-      // buy shares: buy up to 3 random active firms with shares; keep simple
-      let remaining = 3;
-      while (remaining > 0) {
-        const active = Object.values(state.firms).filter((f)=>f.active && f.bankShares>0 && priceForFirm(f)>0);
-        if (active.length === 0) break;
-        active.sort((a,b)=>priceForFirm(a)-priceForFirm(b));
-        const choice = active[0];
-        const price = priceForFirm(choice);
-        if (state.players[pid].cash < price) break;
-        const qty = 1;
-        choice.bankShares -= qty;
-        state.players[pid].shares[choice.id] += qty;
-        state.players[pid].cash -= qty*price;
-        remaining -= qty;
-        if (choice.bankShares === 0) state.log.push(`All public shares of ${choice.id} have been purchased.`);
-      }
+    const result = placeTile(state, playerId, t.id);
+    if (!result.ok) continue;
 
-      state.log.push(`${state.players[pid].name} ended turn.`);
-      break;
+    placed = true;
+    const modal = state.ui.modal as GameState["ui"]["modal"];
+    if (modal?.kind === "FOUND_SELECT") {
+      const pick = pickBotFoundingChoice(state, modal.choices);
+      foundFirm(state, playerId, pick, modal.tileId);
     }
-    if (!placed) {
-      state.log.push(`${state.players[pid].name} had no legal tile.`);
+
+    const afterFoundModal = state.ui.modal as GameState["ui"]["modal"];
+    if (afterFoundModal?.kind === "SURVIVOR_CHOICE") {
+      const [firstChoice] = afterFoundModal.choices;
+      chooseSurvivor(state, playerId, firstChoice);
     }
+
+    const mergerModal = state.ui.modal as GameState["ui"]["modal"];
+    if (mergerModal?.kind === "MERGER") {
+      autoResolveMerger(state);
+    }
+
+    state.log.push(`${bot.name} placed ${t.id}${prev.details ? ` (${prev.details}).` : "."}`);
+    break;
   }
-  // back to human
+
+  if (!placed) {
+    state.log.push(`${bot.name} had no legal tile.`);
+  }
+
+  runBotStockPurchase(state, playerId);
+  state.log.push(`${bot.name} ended turn.`);
+}
+
+function finishBotPhase(state: GameState): void {
   state.currentPlayer = 0;
   state.roundNumber += 1;
   state.ui.phase = "HUMAN_PLACE";
   state.ui.modal = null;
+  state.ui.botTurnState = null;
   setTimer(state, "Place Tile", "HUMAN_PLACE");
   checkEnd(state);
+}
+
+export function runNextBotTurn(state: GameState): void {
+  const queue = state.ui.botTurnState;
+  if (!queue) return;
+
+  if (queue.botIndex >= queue.botOrder.length) {
+    finishBotPhase(state);
+    return;
+  }
+
+  const playerId = queue.botOrder[queue.botIndex];
+  runSingleBotTurn(state, playerId);
+
+  queue.botIndex += 1;
+  if (queue.botIndex >= queue.botOrder.length) {
+    finishBotPhase(state);
+    return;
+  }
+
+  state.ui.phase = "BOT_TURN";
+  setBotStepTimer(state, state.players[queue.botOrder[queue.botIndex]].name);
 }
 
 export function chooseSurvivor(state: GameState, playerId: number, survivor: FirmId): void {
@@ -764,6 +817,7 @@ export function startHumanTurn(state: GameState): void {
   state.currentPlayer = 0;
   state.ui.phase = "HUMAN_PLACE";
   state.ui.modal = null;
+  state.ui.botTurnState = null;
   setTimer(state, "Place Tile", "HUMAN_PLACE");
 }
 
@@ -849,8 +903,8 @@ export function handleTimeout(state: GameState): void {
     return;
   }
 
-  if (phase === "BOT_TURN") {
-    runBots(state);
+  if (phase === "BOT_TURN" && step === "BOT_STEP") {
+    runNextBotTurn(state);
     return;
   }
 }

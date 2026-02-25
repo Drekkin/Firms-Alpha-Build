@@ -6,6 +6,7 @@ export const HAND_SIZE = 6;
 
 export const STARTING_CASH = 8_000_000;
 export const TIMER_MS = 30_000;
+export const BOT_STEP_MS = 1_200;
 
 export const SAFE_SIZE = 14;
 export const END_SIZE = 43;
