@@ -63,6 +63,11 @@ export interface TimerState {
   stepKey: string;
 }
 
+export interface BotTurnState {
+  botOrder: number[];
+  botIndex: number;
+}
+
 export interface PlacementPreview {
   tileId: string;
   row: number;
@@ -114,6 +119,7 @@ export interface UIState {
     | { kind: "ENDGAME"; standings: { name: string; cash: number }[] };
 
   timer: TimerState;
+  botTurnState: BotTurnState | null;
 }
 
 export interface GameState {
