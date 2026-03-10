@@ -1,8 +1,9 @@
-import { BOARD_COLS, BOARD_ROWS, DEFAULT_VISIBILITY, END_SIZE, FIRM_ORDER, FIRM_TIERS, HAND_SIZE, SAFE_SIZE, STARTING_CASH, TIMER_MS, BOT_STEP_MS } from "./constants";
+import { BOARD_COLS, BOARD_ROWS, DEFAULT_VISIBILITY, END_SIZE, FIRM_ORDER, FIRM_TIERS, HAND_SIZE, SAFE_SIZE, STARTING_CASH, TIMER_MS, BOT_STEP_MS, VOTE_TIMER_MS } from "./constants";
 import { cloneBoard, findConnectedUnincorpCluster, findFirmTiles, neighbors4, touchingFirms, touchingUnincorp } from "./board";
 import { hashSeed, mulberry32 } from "./rng";
 import { majorityBonus, minorityBonus, priceForFirm } from "./pricing";
 import { Cell, Firm, FirmId, GameState, MergerCtx, PlacementPreview, Player, VoteCtx, Tile } from "./types";
+import { isAnyVotePossible, isFirmVoteCallableByPlayer } from "./voteSelectors";
 
 export function createTiles(): Tile[] {
   const tiles: Tile[] = [];
@@ -122,8 +123,17 @@ function refillHand(state: GameState, playerId: number): void {
   }
 }
 
-function setTimer(state: GameState, label: string, stepKey: string): void {
-  state.ui.timer = { active: true, endsAt: Date.now() + TIMER_MS, label, stepKey };
+function setTimer(state: GameState, label: string, stepKey: string, durationMs = TIMER_MS): void {
+  state.ui.timer = { active: true, endsAt: Date.now() + durationMs, label, stepKey };
+}
+
+export function enterHumanVoteOrBuyPhase(state: GameState): void {
+  if (state.currentPlayer !== 0) return;
+  if (isAnyVotePossible(state, 0)) {
+    startHumanVoteWindow(state);
+    return;
+  }
+  startHumanBuy(state);
 }
 
 function firmRecalc(state: GameState, firmId: FirmId): void {
@@ -223,9 +233,7 @@ export function placeTile(state: GameState, playerId: number, tileId: string): {
   if (prev.outcome === "UNINCORP") {
     state.board[tile.row][tile.col].firmId = null;
     state.log.push(`${p.name} placed ${tileId}: Unincorporated.`);
-    // proceed to vote window
-    state.ui.phase = playerId === 0 ? "HUMAN_VOTE" : state.ui.phase;
-    if (playerId === 0) setTimer(state, "Vote Window", "HUMAN_VOTE");
+    if (playerId === 0) enterHumanVoteOrBuyPhase(state);
     return { ok: true };
   }
 
@@ -244,11 +252,8 @@ export function placeTile(state: GameState, playerId: number, tileId: string): {
     }
     recalculateFirmsFromBoard(state);
     state.log.push(`${p.name} placed ${tileId}: Grew ${firmId} (size ${state.firms[firmId].size}).`);
-    if (playerId === 0) {
-      state.ui.phase = "HUMAN_VOTE";
-      setTimer(state, "Vote Window", "HUMAN_VOTE");
-    }
     checkEnd(state);
+    if (playerId === 0 && state.ui.phase !== "ENDGAME") enterHumanVoteOrBuyPhase(state);
     return { ok: true };
   }
 
@@ -333,17 +338,12 @@ export function foundFirm(state: GameState, playerId: number, firmId: FirmId, ti
 
   state.log.push(`${p.name} founded ${firmId} (size ${firm.size}).`);
   state.ui.modal = null;
-  state.ui.phase = "HUMAN_VOTE";
-  setTimer(state, "Vote Window", "HUMAN_VOTE");
   checkEnd(state);
+  if (playerId === 0 && state.ui.phase !== "ENDGAME") enterHumanVoteOrBuyPhase(state);
 }
 
 export function canCallVote(state: GameState, playerId: number, firmId: FirmId): boolean {
-  const firm = state.firms[firmId];
-  if (!firm.active) return false;
-  if (firm.safe) return false;
-  if (firm.bankShares !== 0) return false;
-  return state.players[playerId].shares[firmId] > 0;
+  return isFirmVoteCallableByPlayer(state, playerId, firmId);
 }
 
 export function resolveVote(state: GameState, ctx: VoteCtx): void {
@@ -732,9 +732,8 @@ export function applyMergerDecision(
       // finalize: convert all acquired tiles + trigger tile into survivor; deactivate acquired firms; set sizes
       finalizeMerger(state, ctx);
       state.ui.modal = null;
-      state.ui.phase = ctx.initiatorId === 0 ? "HUMAN_VOTE" : state.ui.phase;
-      if (ctx.initiatorId === 0) setTimer(state, "Vote Window", "HUMAN_VOTE");
       checkEnd(state);
+      if (ctx.initiatorId === 0 && state.ui.phase !== "ENDGAME") enterHumanVoteOrBuyPhase(state);
       return { ok: true };
     } else {
       // set remainingShares for next acquired firm (not used in UI yet)
@@ -788,9 +787,13 @@ export function autoResolveMerger(state: GameState): void {
 }
 
 export function startHumanVoteWindow(state: GameState): void {
+  if (!isAnyVotePossible(state, 0)) {
+    startHumanBuy(state);
+    return;
+  }
   state.ui.phase = "HUMAN_VOTE";
   state.ui.modal = null;
-  setTimer(state, "Vote Window", "HUMAN_VOTE");
+  setTimer(state, "Vote Window", "HUMAN_VOTE", VOTE_TIMER_MS);
 }
 
 export function startHumanBuy(state: GameState): void {
