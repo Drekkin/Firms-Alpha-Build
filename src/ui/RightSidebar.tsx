@@ -1,5 +1,6 @@
 import { FirmId, GameState } from "../game/types";
 import { priceForFirm } from "../game/pricing";
+import { getVoteCallableFirmIds } from "../game/voteSelectors";
 
 function firmLabel(id: FirmId) {
   return id[0] + id.slice(1).toLowerCase();
@@ -16,6 +17,7 @@ export default function RightSidebar({
 }) {
   const visibility = state.visibility;
   const merger = state.ui.modal?.kind === "MERGER" ? state.ui.modal.ctx : null;
+  const callableVotes = new Set(getVoteCallableFirmIds(state, 0));
 
   return (
     <div style={{ width: 320, borderLeft: "1px solid #24262c", padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>
@@ -57,7 +59,7 @@ export default function RightSidebar({
                 {f.active ? `Sz ${f.size}` : "—"} • {price ? `$${Math.round(price / 1000)}k` : "—"}
               </div>
 
-              {state.ui.phase === "HUMAN_VOTE" && f.active && f.bankShares === 0 && !f.safe && state.players[0].shares[f.id] > 0 && (
+              {state.ui.phase === "HUMAN_VOTE" && callableVotes.has(f.id) && (
                 <button
                   onClick={() => onCallVote(f.id)}
                   style={{ marginTop: 6, width: "100%", background: "#1a1c22", color: "#eaeaea", border: "1px solid #2a2d35", borderRadius: 10, padding: "6px 8px", fontSize: 11 }}
