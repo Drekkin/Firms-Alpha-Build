@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { FirmId, GameState } from "../game/types";
 import { priceForFirm } from "../game/pricing";
 import { getVoteCallableFirmIds } from "../game/voteSelectors";
+import TransparencyToggle from "./TransparencyToggle";
 
 function firmLabel(id: FirmId) {
   return id[0] + id.slice(1).toLowerCase();
@@ -15,6 +17,7 @@ export default function RightSidebar({
   onCallVote: (firmId: FirmId) => void;
   onMergerDecision: (trade: number, sell: number) => void;
 }) {
+  const [isMergerTransparent, setIsMergerTransparent] = useState(false);
   const visibility = state.visibility;
   const merger = state.ui.modal?.kind === "MERGER" ? state.ui.modal.ctx : null;
   const callableVotes = new Set(getVoteCallableFirmIds(state, 0));
@@ -73,8 +76,14 @@ export default function RightSidebar({
       </div>
 
       {merger && (
-        <div style={{ border: "1px solid #2a2d35", borderRadius: 14, background: "#12141a", padding: 10 }}>
-          <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 6 }}>Merger</div>
+        <div style={{ border: "1px solid #2a2d35", borderRadius: 14, background: "#12141a", padding: 10, opacity: isMergerTransparent ? 0.42 : 1 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 6 }}>
+            <div style={{ fontSize: 12, opacity: 0.85 }}>Merger</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {isMergerTransparent && <div style={{ fontSize: 10, opacity: 0.85 }}>Transparent mode</div>}
+              <TransparencyToggle isTransparent={isMergerTransparent} onToggle={() => setIsMergerTransparent((v) => !v)} />
+            </div>
+          </div>
           <div style={{ fontSize: 13, fontWeight: 900 }}>Survivor: {merger.survivor ?? "?"}</div>
           <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>Acquired: {merger.acquired.join(", ")}</div>
 
