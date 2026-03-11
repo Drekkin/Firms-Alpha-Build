@@ -116,6 +116,20 @@ export function computePlacementPreview(state: GameState, tileId: string): Place
   return { tileId, row, col, outcome: "UNINCORP", details: "Unincorporated", involvedFirms: [], survivorTie: false };
 }
 
+export function getLegalPlayableTilesInHand(state: GameState, playerId: number): Tile[] {
+  const player = state.players[playerId];
+  if (!player) return [];
+
+  return player.hand.filter((tile) => {
+    const preview = computePlacementPreview(state, tile.id);
+    return Boolean(preview && preview.outcome !== "ILLEGAL");
+  });
+}
+
+export function hasAnyLegalPlayableTile(state: GameState, playerId: number): boolean {
+  return getLegalPlayableTilesInHand(state, playerId).length > 0;
+}
+
 function refillHand(state: GameState, playerId: number): void {
   const p = state.players[playerId];
   while (p.hand.length < HAND_SIZE && state.tileBag.length > 0) {
@@ -505,6 +519,33 @@ function runBotStockPurchase(state: GameState, playerId: number): void {
   }
 }
 
+function resolveBlockedPlacementTurn(state: GameState, playerId: number): void {
+  const actor = state.players[playerId];
+  state.log.push(`${actor.name} had no legal tile placements. Turn auto-resolved.`);
+
+  if (playerId === 0) {
+    enterHumanVoteOrBuyPhase(state);
+    return;
+  }
+
+  runBotStockPurchase(state, playerId);
+  state.log.push(`${actor.name} ended turn.`);
+}
+
+function startHumanPlacementPhase(state: GameState): void {
+  state.currentPlayer = 0;
+  state.ui.phase = "HUMAN_PLACE";
+  state.ui.modal = null;
+  state.ui.botTurnState = null;
+
+  if (!hasAnyLegalPlayableTile(state, 0)) {
+    resolveBlockedPlacementTurn(state, 0);
+    return;
+  }
+
+  setTimer(state, "Place Tile", "HUMAN_PLACE");
+}
+
 function runSingleBotTurn(state: GameState, playerId: number): void {
   const bot = state.players[playerId];
   state.currentPlayer = playerId;
@@ -513,15 +554,19 @@ function runSingleBotTurn(state: GameState, playerId: number): void {
 
   state.log.push(`${bot.name} is taking a turn...`);
 
-  let placed = false;
-  for (const t of bot.hand) {
+  const legalTiles = getLegalPlayableTilesInHand(state, playerId);
+  if (legalTiles.length === 0) {
+    resolveBlockedPlacementTurn(state, playerId);
+    return;
+  }
+
+  for (const t of legalTiles) {
     const prev = computePlacementPreview(state, t.id);
-    if (!prev || prev.outcome === "ILLEGAL") continue;
+    if (!prev) continue;
 
     const result = placeTile(state, playerId, t.id);
     if (!result.ok) continue;
 
-    placed = true;
     const modal = state.ui.modal as GameState["ui"]["modal"];
     if (modal?.kind === "FOUND_SELECT") {
       const pick = pickBotFoundingChoice(state, modal.choices);
@@ -540,24 +585,17 @@ function runSingleBotTurn(state: GameState, playerId: number): void {
     }
 
     state.log.push(`${bot.name} placed ${t.id}${prev.details ? ` (${prev.details}).` : "."}`);
-    break;
+    runBotStockPurchase(state, playerId);
+    state.log.push(`${bot.name} ended turn.`);
+    return;
   }
 
-  if (!placed) {
-    state.log.push(`${bot.name} had no legal tile.`);
-  }
-
-  runBotStockPurchase(state, playerId);
-  state.log.push(`${bot.name} ended turn.`);
+  resolveBlockedPlacementTurn(state, playerId);
 }
 
 function finishBotPhase(state: GameState): void {
-  state.currentPlayer = 0;
   state.roundNumber += 1;
-  state.ui.phase = "HUMAN_PLACE";
-  state.ui.modal = null;
-  state.ui.botTurnState = null;
-  setTimer(state, "Place Tile", "HUMAN_PLACE");
+  startHumanPlacementPhase(state);
   checkEnd(state);
 }
 
@@ -817,11 +855,7 @@ export function startHumanBuy(state: GameState): void {
 }
 
 export function startHumanTurn(state: GameState): void {
-  state.currentPlayer = 0;
-  state.ui.phase = "HUMAN_PLACE";
-  state.ui.modal = null;
-  state.ui.botTurnState = null;
-  setTimer(state, "Place Tile", "HUMAN_PLACE");
+  startHumanPlacementPhase(state);
 }
 
 export function handleTimeout(state: GameState): void {
@@ -830,26 +864,18 @@ export function handleTimeout(state: GameState): void {
 
   if (phase === "HUMAN_PLACE") {
     // auto-place first legal tile; prefer non-merge
-    const hand = state.players[0].hand;
-    let candidate: Tile | null = null;
-    for (const t of hand) {
-      const prev = computePlacementPreview(state, t.id);
-      if (!prev || prev.outcome === "ILLEGAL") continue;
-      if (prev.outcome === "MERGE") continue;
-      candidate = t; break;
-    }
-    if (!candidate) {
-      for (const t of hand) {
-        const prev = computePlacementPreview(state, t.id);
-        if (!prev || prev.outcome === "ILLEGAL") continue;
-        candidate = t; break;
-      }
-    }
+    const legalTiles = getLegalPlayableTilesInHand(state, 0);
+    const candidate = legalTiles.find((tile) => {
+      const preview = computePlacementPreview(state, tile.id);
+      return preview && preview.outcome !== "MERGE";
+    }) ?? legalTiles[0] ?? null;
+
     if (candidate) {
       placeTile(state, 0, candidate.id);
       state.log.push("Timer expired — auto tile placed.");
     } else {
       state.log.push("Timer expired — no legal tile available.");
+      resolveBlockedPlacementTurn(state, 0);
     }
     return;
   }
