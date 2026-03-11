@@ -1,4 +1,4 @@
-import { useReducer } from "react";
+import { useReducer, useState } from "react";
 import { reducer } from "./game/reducer";
 import { createInitialState } from "./game/engine";
 import { useTimer } from "./hooks/useTimer";
@@ -7,11 +7,19 @@ import Board from "./ui/Board";
 import RightSidebar from "./ui/RightSidebar";
 import BottomBar from "./ui/BottomBar";
 import SettingsModal from "./ui/SettingsModal";
+import TransparencyToggle from "./ui/TransparencyToggle";
 import { FIRM_ORDER } from "./game/constants";
 import { priceForFirm } from "./game/pricing";
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, undefined, () => createInitialState("alpha"));
+  const [transparentModalByKey, setTransparentModalByKey] = useState<Record<string, boolean>>({});
+
+  const toggleTransparency = (key: string) => {
+    setTransparentModalByKey((current) => ({ ...current, [key]: !current[key] }));
+  };
+
+  const isTransparent = (key: string) => Boolean(transparentModalByKey[key]);
 
   useTimer(state.ui.timer.active, state.ui.timer.endsAt, () => dispatch({ type: "TIMEOUT" }));
 
@@ -53,9 +61,19 @@ export default function App() {
       <SettingsModal state={state} onClose={() => dispatch({ type: "CLOSE_SETTINGS" })} />
 
       {buyModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", display: "flex", justifyContent: "center", alignItems: "center", padding: 20, zIndex: 20 }}>
-          <div style={{ width: 860, background: "#0e0f12", border: "1px solid #2a2d35", borderRadius: 18, padding: 16 }}>
-            <div style={{ fontSize: 20, fontWeight: 900 }}>Buy Shares</div>
+        <div style={{ position: "fixed", inset: 0, background: isTransparent("BUY") ? "rgba(0,0,0,0.15)" : "rgba(0,0,0,0.65)", display: "flex", justifyContent: "center", alignItems: "center", padding: 20, zIndex: 20 }}>
+          <div style={{ width: 860, background: "#0e0f12", border: "1px solid #2a2d35", borderRadius: 18, padding: 16, opacity: isTransparent("BUY") ? 0.42 : 1 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ fontSize: 20, fontWeight: 900 }}>Buy Shares</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {isTransparent("BUY") && (
+                  <div style={{ fontSize: 11, padding: "4px 8px", borderRadius: 999, background: "#2f415f", border: "1px solid #4d6691" }}>
+                    Transparent mode
+                  </div>
+                )}
+                <TransparencyToggle isTransparent={isTransparent("BUY")} onToggle={() => toggleTransparency("BUY")} />
+              </div>
+            </div>
             <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>Select up to 3 total shares.</div>
 
             <div style={{ display: "flex", gap: 10, marginTop: 12, fontSize: 13 }}>
@@ -123,9 +141,15 @@ export default function App() {
       )}
 
       {state.ui.modal?.kind === "FOUND_SELECT" && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", justifyContent: "center", alignItems: "center", padding: 20 }}>
-          <div style={{ width: 520, background: "#0e0f12", border: "1px solid #2a2d35", borderRadius: 18, padding: 16 }}>
-            <div style={{ fontSize: 16, fontWeight: 900 }}>Found a firm</div>
+        <div style={{ position: "fixed", inset: 0, background: isTransparent("FOUND_SELECT") ? "rgba(0,0,0,0.14)" : "rgba(0,0,0,0.55)", display: "flex", justifyContent: "center", alignItems: "center", padding: 20 }}>
+          <div style={{ width: 520, background: "#0e0f12", border: "1px solid #2a2d35", borderRadius: 18, padding: 16, opacity: isTransparent("FOUND_SELECT") ? 0.45 : 1 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ fontSize: 16, fontWeight: 900 }}>Found a firm</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {isTransparent("FOUND_SELECT") && <div style={{ fontSize: 11, opacity: 0.85 }}>Transparent mode</div>}
+                <TransparencyToggle isTransparent={isTransparent("FOUND_SELECT")} onToggle={() => toggleTransparency("FOUND_SELECT")} />
+              </div>
+            </div>
             <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>Choose one of the available firms.</div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
               {state.ui.modal.choices.map((f) => (
@@ -143,9 +167,15 @@ export default function App() {
       )}
 
       {state.ui.modal?.kind === "SURVIVOR_CHOICE" && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", justifyContent: "center", alignItems: "center", padding: 20 }}>
-          <div style={{ width: 520, background: "#0e0f12", border: "1px solid #2a2d35", borderRadius: 18, padding: 16 }}>
-            <div style={{ fontSize: 16, fontWeight: 900 }}>Choose surviving firm</div>
+        <div style={{ position: "fixed", inset: 0, background: isTransparent("SURVIVOR_CHOICE") ? "rgba(0,0,0,0.14)" : "rgba(0,0,0,0.55)", display: "flex", justifyContent: "center", alignItems: "center", padding: 20 }}>
+          <div style={{ width: 520, background: "#0e0f12", border: "1px solid #2a2d35", borderRadius: 18, padding: 16, opacity: isTransparent("SURVIVOR_CHOICE") ? 0.45 : 1 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ fontSize: 16, fontWeight: 900 }}>Choose surviving firm</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {isTransparent("SURVIVOR_CHOICE") && <div style={{ fontSize: 11, opacity: 0.85 }}>Transparent mode</div>}
+                <TransparencyToggle isTransparent={isTransparent("SURVIVOR_CHOICE")} onToggle={() => toggleTransparency("SURVIVOR_CHOICE")} />
+              </div>
+            </div>
             <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>Firms are tied in size. Select which remains.</div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
               {state.ui.modal.choices.map((f) => (
@@ -163,9 +193,15 @@ export default function App() {
       )}
 
       {state.ui.modal?.kind === "ENDGAME" && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", justifyContent: "center", alignItems: "center", padding: 20 }}>
-          <div style={{ width: 560, background: "#0e0f12", border: "1px solid #2a2d35", borderRadius: 18, padding: 16 }}>
-            <div style={{ fontSize: 18, fontWeight: 1000 }}>Game Over</div>
+        <div style={{ position: "fixed", inset: 0, background: isTransparent("ENDGAME") ? "rgba(0,0,0,0.15)" : "rgba(0,0,0,0.7)", display: "flex", justifyContent: "center", alignItems: "center", padding: 20 }}>
+          <div style={{ width: 560, background: "#0e0f12", border: "1px solid #2a2d35", borderRadius: 18, padding: 16, opacity: isTransparent("ENDGAME") ? 0.45 : 1 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ fontSize: 18, fontWeight: 1000 }}>Game Over</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {isTransparent("ENDGAME") && <div style={{ fontSize: 11, opacity: 0.85 }}>Transparent mode</div>}
+                <TransparencyToggle isTransparent={isTransparent("ENDGAME")} onToggle={() => toggleTransparency("ENDGAME")} />
+              </div>
+            </div>
             <div style={{ marginTop: 12 }}>
               {state.ui.modal.standings.map((s, i) => (
                 <div key={s.name} style={{ display: "flex", justifyContent: "space-between", padding: "8px 10px", border: "1px solid #2a2d35", borderRadius: 12, background: "#12141a", marginTop: 8 }}>
