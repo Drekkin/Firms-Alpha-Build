@@ -51,6 +51,10 @@ export function reducer(state: GameState, action: Action): GameState {
       next.ui.draggingTileId = action.tileId;
       return next;
 
+    case "DRAG_CANCEL":
+      next.ui.draggingTileId = null;
+      return next;
+
     case "DRAG_END": {
       const dragging = next.ui.draggingTileId;
       next.ui.draggingTileId = null;

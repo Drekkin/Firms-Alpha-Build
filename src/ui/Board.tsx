@@ -14,20 +14,22 @@ export default function Board({
   onDropCell,
   onHoverCellFirm,
   canInteract,
+  dragOverCell,
 }: {
   state: GameState;
   onDropCell: (row: number, col: number) => void;
   onHoverCellFirm: (firmId: FirmId | null) => void;
   canInteract: boolean;
+  dragOverCell: { row: number; col: number } | null;
 }) {
   const w = PAD + 12 * CELL + 2;
   const h = PAD + 9 * CELL + 2;
 
   const preview = state.ui.preview;
-  const highlightCell = preview ? { row: preview.row, col: preview.col } : null;
+  const previewCell = preview ? { row: preview.row, col: preview.col } : null;
 
   // firm outline: if hovering a firm tile, highlight all tiles for that firm
-  const hoveredFirm = (state.ui.preview?.involvedFirms.length === 1 && state.ui.preview.outcome==="GROW") ? state.ui.preview.involvedFirms[0] : null;
+  const hoveredFirm = (state.ui.preview?.involvedFirms.length === 1 && state.ui.preview.outcome === "GROW") ? state.ui.preview.involvedFirms[0] : null;
 
   return (
     <div style={{ position: "relative", pointerEvents: canInteract ? "auto" : "none", opacity: canInteract ? 1 : 0.92 }}>
@@ -45,7 +47,9 @@ export default function Board({
 
         {state.board.map((row, r) =>
           row.map((cell, c) => {
-            const isHL = highlightCell && highlightCell.row === r && highlightCell.col === c;
+            const isPreviewHL = previewCell && previewCell.row === r && previewCell.col === c;
+            const isDragOverHL = dragOverCell && dragOverCell.row === r && dragOverCell.col === c;
+            const isHL = Boolean(isPreviewHL || isDragOverHL);
             const isFirmOutline = cell.occupied && hoveredFirm && cell.firmId === hoveredFirm;
             return (
               <g key={`${r}-${c}`}>

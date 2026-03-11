@@ -6,6 +6,7 @@ export type Action =
   | { type: "CLOSE_SETTINGS" }
   | { type: "HOVER_TILE"; tileId: string | null }
   | { type: "DRAG_START"; tileId: string }
+  | { type: "DRAG_CANCEL" }
   | { type: "DRAG_END"; row: number; col: number }
   | { type: "FOUND_SELECT"; firmId: FirmId }
   | { type: "CALL_VOTE"; firmId: FirmId }

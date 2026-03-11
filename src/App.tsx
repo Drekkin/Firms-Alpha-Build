@@ -1,4 +1,4 @@
-import { useReducer, useState } from "react";
+import { PointerEvent as ReactPointerEvent, useEffect, useReducer, useRef, useState } from "react";
 import { reducer } from "./game/reducer";
 import { createInitialState } from "./game/engine";
 import { useTimer } from "./hooks/useTimer";
@@ -30,18 +30,108 @@ export default function App() {
     : 0;
 
   const boardInteractionEnabled = state.ui.phase === "HUMAN_PLACE" && state.currentPlayer === 0;
+  const boardHostRef = useRef<HTMLDivElement | null>(null);
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
+  const [dragOverCell, setDragOverCell] = useState<{ row: number; col: number } | null>(null);
+  const [snapAnim, setSnapAnim] = useState<{ tileId: string; fromX: number; fromY: number; toX: number; toY: number } | null>(null);
+
+  const getCellFromPoint = (x: number, y: number): { row: number; col: number } | null => {
+    const host = boardHostRef.current;
+    if (!host) return null;
+    const rect = host.getBoundingClientRect();
+    const pad = 28;
+    const cell = 52;
+    const localX = x - rect.left - pad;
+    const localY = y - rect.top - pad;
+    if (localX < 0 || localY < 0) return null;
+    const col = Math.floor(localX / cell);
+    const row = Math.floor(localY / cell);
+    if (col < 0 || col > 11 || row < 0 || row > 8) return null;
+    return { row, col };
+  };
+
+  const updateDragOverCell = (x: number, y: number) => {
+    const candidate = getCellFromPoint(x, y);
+    if (!candidate) {
+      setDragOverCell(null);
+      return;
+    }
+    const draggingTileId = state.ui.draggingTileId;
+    if (!draggingTileId) {
+      setDragOverCell(null);
+      return;
+    }
+    const tile = state.players[0].hand.find((t) => t.id === draggingTileId);
+    if (!tile || tile.row !== candidate.row || tile.col !== candidate.col) {
+      setDragOverCell(null);
+      return;
+    }
+    setDragOverCell(candidate);
+  };
+
+  useEffect(() => {
+    if (!state.ui.draggingTileId) return;
+
+    const handlePointerUp = (event: PointerEvent) => {
+      const dropCell = getCellFromPoint(event.clientX, event.clientY);
+      const draggingTileId = state.ui.draggingTileId;
+      const tile = draggingTileId ? state.players[0].hand.find((t) => t.id === draggingTileId) : null;
+      const validDrop = Boolean(tile && dropCell && tile.row === dropCell.row && tile.col === dropCell.col);
+      const currentDragPos = dragPos;
+
+      setDragPos(null);
+      setDragOverCell(null);
+
+      if (!draggingTileId) return;
+      if (!validDrop || !dropCell || !currentDragPos) {
+        dispatch({ type: "DRAG_CANCEL" });
+        return;
+      }
+
+      const host = boardHostRef.current;
+      if (!host) {
+        dispatch({ type: "DRAG_END", row: dropCell.row, col: dropCell.col });
+        return;
+      }
+      const rect = host.getBoundingClientRect();
+      const pad = 28;
+      const cell = 52;
+      const targetX = rect.left + pad + dropCell.col * cell + cell / 2;
+      const targetY = rect.top + pad + dropCell.row * cell + cell / 2;
+
+      setSnapAnim({ tileId: draggingTileId, fromX: currentDragPos.x, fromY: currentDragPos.y, toX: targetX, toY: targetY });
+      window.setTimeout(() => {
+        setSnapAnim(null);
+        dispatch({ type: "DRAG_END", row: dropCell.row, col: dropCell.col });
+      }, 120);
+    };
+
+    const handlePointerCancel = () => {
+      setDragPos(null);
+      setDragOverCell(null);
+      dispatch({ type: "DRAG_CANCEL" });
+    };
+
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerCancel);
+    return () => {
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerCancel);
+    };
+  }, [dragPos, state.players, state.ui.draggingTileId]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
       <TopBar state={state} onOpenSettings={() => dispatch({ type: "OPEN_SETTINGS" })} />
 
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-        <div style={{ flex: 1, padding: 14, display: "flex", justifyContent: "center", alignItems: "center" }}>
+        <div ref={boardHostRef} style={{ flex: 1, padding: 14, display: "flex", justifyContent: "center", alignItems: "center" }}>
           <Board
             state={state}
             onDropCell={(row, col) => dispatch({ type: "DRAG_END", row, col })}
             onHoverCellFirm={() => {}}
             canInteract={boardInteractionEnabled}
+            dragOverCell={dragOverCell}
           />
         </div>
 
@@ -54,9 +144,57 @@ export default function App() {
 
       <BottomBar
         state={state}
-        onDragStart={(tileId) => dispatch({ type: "DRAG_START", tileId })}
+        onDragStart={(tileId, event) => {
+          if (!boardInteractionEnabled) return;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          dispatch({ type: "DRAG_START", tileId });
+          dispatch({ type: "HOVER_TILE", tileId });
+          setDragPos({ x: event.clientX, y: event.clientY });
+          updateDragOverCell(event.clientX, event.clientY);
+        }}
         onHoverTile={(tileId) => dispatch({ type: "HOVER_TILE", tileId })}
+        onDragMove={(event: ReactPointerEvent<HTMLDivElement>) => {
+          if (!state.ui.draggingTileId) return;
+          setDragPos({ x: event.clientX, y: event.clientY });
+          updateDragOverCell(event.clientX, event.clientY);
+        }}
+        onDragEnd={() => {}}
+        onDragCancel={() => {
+          setDragPos(null);
+          setDragOverCell(null);
+          dispatch({ type: "DRAG_CANCEL" });
+        }}
+        canInteract={boardInteractionEnabled}
       />
+
+      {(state.ui.draggingTileId && dragPos) || snapAnim ? (
+        <div
+          style={{
+            position: "fixed",
+            left: 0,
+            top: 0,
+            width: 52,
+            height: 72,
+            borderRadius: 12,
+            background: "#2a2d35",
+            border: "1px solid #5a7dff",
+            color: "white",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            fontWeight: 900,
+            pointerEvents: "none",
+            zIndex: 30,
+            transform: snapAnim
+              ? `translate(${snapAnim.toX - 26}px, ${snapAnim.toY - 36}px) scale(0.96)`
+              : `translate(${(dragPos?.x ?? 0) - 26}px, ${(dragPos?.y ?? 0) - 36}px) scale(1)`,
+            transition: snapAnim ? "transform 120ms ease-out" : "none",
+            boxShadow: snapAnim ? "0 0 0 2px rgba(59,124,255,0.35), 0 8px 20px rgba(0,0,0,0.35)" : "0 8px 20px rgba(0,0,0,0.35)",
+          }}
+        >
+          {snapAnim?.tileId ?? state.ui.draggingTileId}
+        </div>
+      ) : null}
 
       <SettingsModal state={state} onClose={() => dispatch({ type: "CLOSE_SETTINGS" })} />
 
