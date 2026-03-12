@@ -6,11 +6,14 @@ export const HAND_SIZE = 6;
 
 export const STARTING_CASH = 8_000_000;
 export const TIMER_MS = 30_000;
-export const VOTE_TIMER_MS = 15_000;
 export const BOT_STEP_MS = 1_200;
 
-export const SAFE_SIZE = 14;
+export const SAFE_SIZE = 11;
 export const END_SIZE = 43;
+
+export function isFirmSafeSize(size: number): boolean {
+  return size >= SAFE_SIZE;
+}
 
 export const FIRM_ORDER: FirmId[] = ["ALPHA","BETA","GAMMA","DELTA","EPSILON","ZETA","SIGMA"];
 
@@ -36,5 +39,4 @@ export const DEFAULT_VISIBILITY: VisibilityConfig = {
   bankCounts: "HIDDEN",
   bankDepletionAnnounce: true,
   mergerTransparency: "AGGREGATE_ONLY",
-  voteTransparency: "RESULT_ONLY",
 };

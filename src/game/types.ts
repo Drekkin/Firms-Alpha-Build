@@ -13,7 +13,6 @@ export type Phase =
   | "HUMAN_PLACE"
   | "HUMAN_FOUND_SELECT"
   | "HUMAN_MERGER"
-  | "HUMAN_VOTE"
   | "HUMAN_BUY"
   | "BOT_TURN"
   | "ENDGAME";
@@ -53,7 +52,6 @@ export interface VisibilityConfig {
   bankCounts: "PUBLIC" | "HIDDEN";
   bankDepletionAnnounce: true;
   mergerTransparency: "AGGREGATE_ONLY";
-  voteTransparency: "RESULT_ONLY";
 }
 
 export interface TimerState {
@@ -96,11 +94,6 @@ export interface MergerCtx {
   remainingShares: Record<number, number>;
 }
 
-export interface VoteCtx {
-  firmId: FirmId;
-  callerId: number;
-  votes: Record<number, "YES" | "NO">;
-}
 
 export interface UIState {
   phase: Phase;
@@ -115,7 +108,6 @@ export interface UIState {
     | { kind: "SURVIVOR_CHOICE"; choices: FirmId[]; ctx: MergerCtx }
     | { kind: "MERGER"; ctx: MergerCtx }
     | { kind: "BUY"; selections: Record<FirmId, number> }
-    | { kind: "VOTE"; ctx: VoteCtx }
     | { kind: "ENDGAME"; standings: { name: string; cash: number }[] };
 
   timer: TimerState;

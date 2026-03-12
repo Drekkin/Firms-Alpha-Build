@@ -1,9 +1,8 @@
-import { BOARD_COLS, BOARD_ROWS, DEFAULT_VISIBILITY, END_SIZE, FIRM_ORDER, FIRM_TIERS, HAND_SIZE, SAFE_SIZE, STARTING_CASH, TIMER_MS, BOT_STEP_MS, VOTE_TIMER_MS } from "./constants";
+import { BOARD_COLS, BOARD_ROWS, DEFAULT_VISIBILITY, END_SIZE, FIRM_ORDER, FIRM_TIERS, HAND_SIZE, STARTING_CASH, isFirmSafeSize, TIMER_MS, BOT_STEP_MS } from "./constants";
 import { cloneBoard, findConnectedUnincorpCluster, findFirmTiles, neighbors4, touchingFirms, touchingUnincorp } from "./board";
 import { hashSeed, mulberry32 } from "./rng";
 import { majorityBonus, minorityBonus, priceForFirm } from "./pricing";
-import { Cell, Firm, FirmId, GameState, MergerCtx, PlacementPreview, Player, VoteCtx, Tile } from "./types";
-import { isAnyVotePossible, isFirmVoteCallableByPlayer } from "./voteSelectors";
+import { Cell, Firm, FirmId, GameState, MergerCtx, PlacementPreview, Player, Tile } from "./types";
 
 export function createTiles(): Tile[] {
   const tiles: Tile[] = [];
@@ -141,12 +140,8 @@ function setTimer(state: GameState, label: string, stepKey: string, durationMs =
   state.ui.timer = { active: true, endsAt: Date.now() + durationMs, label, stepKey };
 }
 
-export function enterHumanVoteOrBuyPhase(state: GameState): void {
+export function enterHumanBuyPhase(state: GameState): void {
   if (state.currentPlayer !== 0) return;
-  if (isAnyVotePossible(state, 0)) {
-    startHumanVoteWindow(state);
-    return;
-  }
   startHumanBuy(state);
 }
 
@@ -155,7 +150,7 @@ function firmRecalc(state: GameState, firmId: FirmId): void {
   const size = tiles.length;
   const firm = state.firms[firmId];
   firm.size = size;
-  if (firm.active && !firm.safe && size >= SAFE_SIZE) {
+  if (firm.active && !firm.safe && isFirmSafeSize(size)) {
     firm.safe = true;
     state.log.push(`${firmId} is now SAFE (size ${size}).`);
   }
@@ -170,7 +165,7 @@ function recalculateFirmsFromBoard(state: GameState): void {
       continue;
     }
     firmRecalc(state, firmId);
-    firm.safe = firm.size >= SAFE_SIZE;
+    firm.safe = isFirmSafeSize(firm.size);
   }
 }
 
@@ -247,7 +242,7 @@ export function placeTile(state: GameState, playerId: number, tileId: string): {
   if (prev.outcome === "UNINCORP") {
     state.board[tile.row][tile.col].firmId = null;
     state.log.push(`${p.name} placed ${tileId}: Unincorporated.`);
-    if (playerId === 0) enterHumanVoteOrBuyPhase(state);
+    if (playerId === 0) enterHumanBuyPhase(state);
     return { ok: true };
   }
 
@@ -267,7 +262,7 @@ export function placeTile(state: GameState, playerId: number, tileId: string): {
     recalculateFirmsFromBoard(state);
     state.log.push(`${p.name} placed ${tileId}: Grew ${firmId} (size ${state.firms[firmId].size}).`);
     checkEnd(state);
-    if (playerId === 0 && state.ui.phase !== "ENDGAME") enterHumanVoteOrBuyPhase(state);
+    if (playerId === 0 && state.ui.phase !== "ENDGAME") enterHumanBuyPhase(state);
     return { ok: true };
   }
 
@@ -353,37 +348,7 @@ export function foundFirm(state: GameState, playerId: number, firmId: FirmId, ti
   state.log.push(`${p.name} founded ${firmId} (size ${firm.size}).`);
   state.ui.modal = null;
   checkEnd(state);
-  if (playerId === 0 && state.ui.phase !== "ENDGAME") enterHumanVoteOrBuyPhase(state);
-}
-
-export function canCallVote(state: GameState, playerId: number, firmId: FirmId): boolean {
-  return isFirmVoteCallableByPlayer(state, playerId, firmId);
-}
-
-export function resolveVote(state: GameState, ctx: VoteCtx): void {
-  // one vote per shareholder; only shareholders vote
-  const firmId = ctx.firmId;
-  const shareholders = state.players.filter((p) => p.shares[firmId] > 0);
-  // ensure bots vote if missing
-  for (const p of shareholders) {
-    if (!ctx.votes[p.id]) {
-      // simple bot rule: vote YES if p is tied for top holder, else NO
-      const holdings = shareholders.map((q) => q.shares[firmId]);
-      const max = Math.max(...holdings);
-      ctx.votes[p.id] = p.shares[firmId] === max ? "YES" : "NO";
-    }
-  }
-  const yes = shareholders.filter((p) => ctx.votes[p.id] === "YES").length;
-  const no = shareholders.filter((p) => ctx.votes[p.id] === "NO").length;
-  const passed = yes > no;
-  state.log.push(`Vote result for ${firmId}: ${passed ? "PASSED" : "FAILED"} (Yes ${yes} / No ${no}).`);
-  if (passed) {
-    state.firms[firmId].safe = true;
-    state.log.push(`${firmId} is now SAFE (vote).`);
-    checkEnd(state);
-  }
-  state.ui.modal = null;
-  startHumanBuy(state);
+  if (playerId === 0 && state.ui.phase !== "ENDGAME") enterHumanBuyPhase(state);
 }
 
 export function buyShares(state: GameState, playerId: number, firmId: FirmId, qty: number): { ok: boolean; error?: string } {
@@ -524,7 +489,7 @@ function resolveBlockedPlacementTurn(state: GameState, playerId: number): void {
   state.log.push(`${actor.name} had no legal tile placements. Turn auto-resolved.`);
 
   if (playerId === 0) {
-    enterHumanVoteOrBuyPhase(state);
+    enterHumanBuyPhase(state);
     return;
   }
 
@@ -771,7 +736,7 @@ export function applyMergerDecision(
       finalizeMerger(state, ctx);
       state.ui.modal = null;
       checkEnd(state);
-      if (ctx.initiatorId === 0 && state.ui.phase !== "ENDGAME") enterHumanVoteOrBuyPhase(state);
+      if (ctx.initiatorId === 0 && state.ui.phase !== "ENDGAME") enterHumanBuyPhase(state);
       return { ok: true };
     } else {
       // set remainingShares for next acquired firm (not used in UI yet)
@@ -822,16 +787,6 @@ export function autoResolveMerger(state: GameState): void {
     const actor = order[ctx.orderIndex];
     applyMergerDecision(state, actor, 0, 0);
   }
-}
-
-export function startHumanVoteWindow(state: GameState): void {
-  if (!isAnyVotePossible(state, 0)) {
-    startHumanBuy(state);
-    return;
-  }
-  state.ui.phase = "HUMAN_VOTE";
-  state.ui.modal = null;
-  setTimer(state, "Vote Window", "HUMAN_VOTE", VOTE_TIMER_MS);
 }
 
 export function startHumanBuy(state: GameState): void {
@@ -912,12 +867,6 @@ export function handleTimeout(state: GameState): void {
     }
   }
 
-  if (phase === "HUMAN_VOTE") {
-    // skip vote, move to buy
-    startHumanBuy(state);
-    state.log.push("Timer expired — skipped vote window.");
-    return;
-  }
 
   if (phase === "HUMAN_BUY") {
     const selected = state.ui.modal?.kind === "BUY"

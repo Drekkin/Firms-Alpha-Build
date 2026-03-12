@@ -26,7 +26,6 @@ export default function SettingsModal({ state, onClose }: { state: GameState; on
             <div>Cash: <b>{v.cash}</b></div>
             <div>Bank counts: <b>{v.bankCounts}</b></div>
             <div>Merger info: <b>{v.mergerTransparency}</b></div>
-            <div>Votes: <b>{v.voteTransparency}</b></div>
             <div>Bank depletion announce: <b>{String(v.bankDepletionAnnounce)}</b></div>
           </div>
         </div>

@@ -1,60 +1,49 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createInitialState, enterHumanVoteOrBuyPhase, foundFirm, startHumanVoteWindow } from "../src/game/engine.ts";
-import { VOTE_TIMER_MS } from "../src/game/constants.ts";
-import { isAnyVotePossible } from "../src/game/voteSelectors.ts";
+import { SAFE_SIZE } from "../src/game/constants.ts";
+import { createInitialState, enterHumanBuyPhase, foundFirm, handleTimeout, placeTile } from "../src/game/engine.ts";
 
-test("isAnyVotePossible requires all legal vote conditions", () => {
-  const state = createInitialState("vote-gating");
+function activateFirmWithSize(state: ReturnType<typeof createInitialState>, firm: "ALPHA", size: number): void {
+  state.firms[firm].active = true;
+  for (let c = 0; c < size; c++) {
+    state.board[0][c] = { occupied: true, firmId: firm };
+  }
+}
 
-  state.firms.ALPHA.active = true;
-  state.firms.ALPHA.safe = false;
-  state.firms.ALPHA.bankShares = 0;
-  state.players[0].shares.ALPHA = 1;
+test("firm only becomes safe automatically at size 11", () => {
+  const state10 = createInitialState("safe-10");
+  activateFirmWithSize(state10, "ALPHA", SAFE_SIZE - 1);
+  state.players[0].hand = [{ id: "K1", row: 0, col: 10 }];
 
-  assert.equal(isAnyVotePossible(state, 0), true);
+  const res10 = placeTile(state10, 0, "K1");
+  assert.equal(res10.ok, true);
+  assert.equal(state10.firms.ALPHA.size, SAFE_SIZE - 1);
+  assert.equal(state10.firms.ALPHA.safe, false);
 
-  state.players[0].shares.ALPHA = 0;
-  assert.equal(isAnyVotePossible(state, 0), false);
+  const state11 = createInitialState("safe-11");
+  activateFirmWithSize(state11, "ALPHA", SAFE_SIZE - 1);
+  state11.players[0].hand = [{ id: "K1", row: 0, col: 10 }];
 
-  state.players[0].shares.ALPHA = 1;
-  state.firms.ALPHA.bankShares = 1;
-  assert.equal(isAnyVotePossible(state, 0), false);
-
-  state.firms.ALPHA.bankShares = 0;
-  state.firms.ALPHA.safe = true;
-  assert.equal(isAnyVotePossible(state, 0), false);
+  const res11 = placeTile(state11, 0, "K1");
+  assert.equal(res11.ok, true);
+  assert.equal(state11.firms.ALPHA.size, SAFE_SIZE);
+  assert.equal(state11.firms.ALPHA.safe, true);
+  assert.ok(state11.log.some((line) => line.includes("ALPHA is now SAFE (size 11).")));
 });
 
-test("vote phase starts only when legal and uses a 15-second timer", () => {
-  const state = createInitialState("vote-window");
-  state.firms.ALPHA.active = true;
-  state.firms.ALPHA.bankShares = 0;
-  state.players[0].shares.ALPHA = 1;
+test("no vote phase exists; human proceeds directly to buy phase", () => {
+  const state = createInitialState("no-vote-phase");
+  state.currentPlayer = 0;
 
-  enterHumanVoteOrBuyPhase(state);
-
-  assert.equal(state.ui.phase, "HUMAN_VOTE");
-  assert.equal(state.ui.timer.stepKey, "HUMAN_VOTE");
-
-  const delta = state.ui.timer.endsAt - Date.now();
-  assert.ok(delta > VOTE_TIMER_MS - 250 && delta <= VOTE_TIMER_MS);
-});
-
-test("vote phase is skipped cleanly when no legal vote targets exist", () => {
-  const state = createInitialState("vote-skip");
-  state.firms.ALPHA.active = true;
-  state.firms.ALPHA.bankShares = 5;
-
-  startHumanVoteWindow(state);
+  enterHumanBuyPhase(state);
 
   assert.equal(state.ui.phase, "HUMAN_BUY");
   assert.equal(state.ui.timer.stepKey, "HUMAN_BUY");
   assert.notEqual(state.ui.timer.label, "Vote Window");
 });
 
-test("bot-founded firms do not open the human vote window", () => {
+test("bot-founded firms do not trigger any vote behavior", () => {
   const state = createInitialState("bot-found");
   state.currentPlayer = 1;
   state.ui.phase = "BOT_TURN";
@@ -65,5 +54,15 @@ test("bot-founded firms do not open the human vote window", () => {
   foundFirm(state, 1, "ALPHA", "A1");
 
   assert.equal(state.ui.phase, "BOT_TURN");
+  assert.notEqual(state.ui.timer.label, "Vote Window");
+  assert.notEqual(state.ui.timer.stepKey, "HUMAN_VOTE");
+});
+
+test("timeout flow after placement never enters a vote phase", () => {
+  const state = createInitialState("timeout-flow");
+
+  handleTimeout(state);
+
+  assert.notEqual(state.ui.phase, "HUMAN_VOTE");
   assert.notEqual(state.ui.timer.stepKey, "HUMAN_VOTE");
 });
