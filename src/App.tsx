@@ -34,11 +34,25 @@ export default function App() {
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const [dragOverCell, setDragOverCell] = useState<{ row: number; col: number } | null>(null);
   const [snapAnim, setSnapAnim] = useState<{ tileId: string; fromX: number; fromY: number; toX: number; toY: number } | null>(null);
+  const dragPosRef = useRef<{ x: number; y: number } | null>(null);
+  const dragOverCellRef = useRef<{ row: number; col: number } | null>(null);
+
+  const setDragPosition = (pos: { x: number; y: number } | null) => {
+    dragPosRef.current = pos;
+    setDragPos(pos);
+  };
+
+  const setResolvedDragOverCell = (cell: { row: number; col: number } | null) => {
+    dragOverCellRef.current = cell;
+    setDragOverCell(cell);
+  };
 
   const getCellFromPoint = (x: number, y: number): { row: number; col: number } | null => {
     const host = boardHostRef.current;
     if (!host) return null;
-    const rect = host.getBoundingClientRect();
+    const boardSvg = host.querySelector("svg");
+    if (!boardSvg) return null;
+    const rect = boardSvg.getBoundingClientRect();
     const pad = 28;
     const cell = 52;
     const localX = x - rect.left - pad;
@@ -53,34 +67,38 @@ export default function App() {
   const updateDragOverCell = (x: number, y: number) => {
     const candidate = getCellFromPoint(x, y);
     if (!candidate) {
-      setDragOverCell(null);
+      setResolvedDragOverCell(null);
       return;
     }
     const draggingTileId = state.ui.draggingTileId;
     if (!draggingTileId) {
-      setDragOverCell(null);
+      setResolvedDragOverCell(null);
       return;
     }
     const tile = state.players[0].hand.find((t) => t.id === draggingTileId);
     if (!tile || tile.row !== candidate.row || tile.col !== candidate.col) {
-      setDragOverCell(null);
+      setResolvedDragOverCell(null);
       return;
     }
-    setDragOverCell(candidate);
+    setResolvedDragOverCell(candidate);
+  };
+
+  const commitDragPlacement = (row: number, col: number) => {
+    dispatch({ type: "DRAG_END", row, col });
   };
 
   useEffect(() => {
     if (!state.ui.draggingTileId) return;
 
     const handlePointerUp = (event: PointerEvent) => {
-      const dropCell = getCellFromPoint(event.clientX, event.clientY);
+      const dropCell = dragOverCellRef.current ?? getCellFromPoint(event.clientX, event.clientY);
       const draggingTileId = state.ui.draggingTileId;
       const tile = draggingTileId ? state.players[0].hand.find((t) => t.id === draggingTileId) : null;
       const validDrop = Boolean(tile && dropCell && tile.row === dropCell.row && tile.col === dropCell.col);
-      const currentDragPos = dragPos;
+      const currentDragPos = dragPosRef.current;
 
-      setDragPos(null);
-      setDragOverCell(null);
+      setDragPosition(null);
+      setResolvedDragOverCell(null);
 
       if (!draggingTileId) return;
       if (!validDrop || !dropCell || !currentDragPos) {
@@ -90,10 +108,11 @@ export default function App() {
 
       const host = boardHostRef.current;
       if (!host) {
-        dispatch({ type: "DRAG_END", row: dropCell.row, col: dropCell.col });
+        commitDragPlacement(dropCell.row, dropCell.col);
         return;
       }
-      const rect = host.getBoundingClientRect();
+      const boardSvg = host.querySelector("svg");
+      const rect = boardSvg ? boardSvg.getBoundingClientRect() : host.getBoundingClientRect();
       const pad = 28;
       const cell = 52;
       const targetX = rect.left + pad + dropCell.col * cell + cell / 2;
@@ -102,13 +121,13 @@ export default function App() {
       setSnapAnim({ tileId: draggingTileId, fromX: currentDragPos.x, fromY: currentDragPos.y, toX: targetX, toY: targetY });
       window.setTimeout(() => {
         setSnapAnim(null);
-        dispatch({ type: "DRAG_END", row: dropCell.row, col: dropCell.col });
+        commitDragPlacement(dropCell.row, dropCell.col);
       }, 120);
     };
 
     const handlePointerCancel = () => {
-      setDragPos(null);
-      setDragOverCell(null);
+      setDragPosition(null);
+      setResolvedDragOverCell(null);
       dispatch({ type: "DRAG_CANCEL" });
     };
 
@@ -118,7 +137,7 @@ export default function App() {
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerCancel);
     };
-  }, [dragPos, state.players, state.ui.draggingTileId]);
+  }, [state.players, state.ui.draggingTileId]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
@@ -128,7 +147,7 @@ export default function App() {
         <div ref={boardHostRef} style={{ flex: 1, padding: 14, display: "flex", justifyContent: "center", alignItems: "center" }}>
           <Board
             state={state}
-            onDropCell={(row, col) => dispatch({ type: "DRAG_END", row, col })}
+            onDropCell={commitDragPlacement}
             onHoverCellFirm={() => {}}
             canInteract={boardInteractionEnabled}
             dragOverCell={dragOverCell}
@@ -149,19 +168,19 @@ export default function App() {
           event.currentTarget.setPointerCapture(event.pointerId);
           dispatch({ type: "DRAG_START", tileId });
           dispatch({ type: "HOVER_TILE", tileId });
-          setDragPos({ x: event.clientX, y: event.clientY });
+          setDragPosition({ x: event.clientX, y: event.clientY });
           updateDragOverCell(event.clientX, event.clientY);
         }}
         onHoverTile={(tileId) => dispatch({ type: "HOVER_TILE", tileId })}
         onDragMove={(event: ReactPointerEvent<HTMLDivElement>) => {
           if (!state.ui.draggingTileId) return;
-          setDragPos({ x: event.clientX, y: event.clientY });
+          setDragPosition({ x: event.clientX, y: event.clientY });
           updateDragOverCell(event.clientX, event.clientY);
         }}
         onDragEnd={() => {}}
         onDragCancel={() => {
-          setDragPos(null);
-          setDragOverCell(null);
+          setDragPosition(null);
+          setResolvedDragOverCell(null);
           dispatch({ type: "DRAG_CANCEL" });
         }}
         canInteract={boardInteractionEnabled}
