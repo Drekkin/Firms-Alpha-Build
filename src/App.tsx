@@ -156,7 +156,6 @@ export default function App() {
 
         <RightSidebar
           state={state}
-          onCallVote={(firmId) => dispatch({ type: "CALL_VOTE", firmId })}
           onMergerDecision={(trade, sell) => dispatch({ type: "MERGER_DECIDE", trade, sell })}
         />
       </div>

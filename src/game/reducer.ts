@@ -3,14 +3,12 @@ import { GameState } from "./types";
 import {
   buyShares,
   confirmBuySelection,
-  canCallVote,
   chooseSurvivor,
   computePlacementPreview,
   createInitialState,
   foundFirm,
   handleTimeout,
   placeTile,
-  resolveVote,
   applyMergerDecision,
 } from "./engine";
 
@@ -101,16 +99,6 @@ export function reducer(state: GameState, action: Action): GameState {
       return next;
     }
 
-    case "CALL_VOTE": {
-      if (!canCallVote(next, 0, action.firmId)) {
-        next.log.push("Cannot call vote.");
-        return next;
-      }
-      // open vote ctx and resolve immediately (result-only)
-      const vctx = { firmId: action.firmId, callerId: 0, votes: { 0: "YES" as const } };
-      resolveVote(next, vctx);
-      return next;
-    }
 
     case "BUY_SET_QTY": {
       const res = buyShares(next, 0, action.firmId, action.qty);
