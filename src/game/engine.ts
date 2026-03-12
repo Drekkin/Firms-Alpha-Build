@@ -718,27 +718,17 @@ export function applyMergerDecision(
   const currentActor = order[ctx.orderIndex];
   if (currentActor !== playerId) return { ok: false, error: "Not your turn to decide." };
 
+  const allocation = getMergerAllocationSummary(state, playerId, trade, sell);
+  if (!allocation.ok) return { ok: false, error: allocation.error };
+
   const p = state.players[playerId];
   const firm = state.firms[acquiredFirmId];
   const survFirm = state.firms[survivor];
-  const have = p.shares[acquiredFirmId];
 
-  if (trade < 0 || sell < 0) return { ok: false, error: "Negative values." };
-  if (trade + sell > have) return { ok: false, error: "Exceeds holdings." };
-
-  // trade is number of acquired shares to trade in (must be even count in effect; we allow any and floor)
-  const tradeIn = trade;
-  const tradeOutWanted = Math.floor(tradeIn / 2);
-
-  const tradeOut = Math.min(tradeOutWanted, survFirm.bankShares);
-  if (tradeOut < tradeOutWanted) ctx.currentTotals.tradeCapped = true;
-
-  // consume shares
-  const consumedTradeIn = tradeOut * 2;
-  const remainingAfterTrade = have - consumedTradeIn;
-
-  const sellActual = Math.min(sell, remainingAfterTrade);
-  const held = have - consumedTradeIn - sellActual;
+  const consumedTradeIn = allocation.tradeIn;
+  const tradeOut = allocation.tradeOut;
+  const sellActual = allocation.sell;
+  const held = allocation.keep;
 
   // apply holdings changes
   p.shares[acquiredFirmId] -= (consumedTradeIn + sellActual);
@@ -782,6 +772,77 @@ export function applyMergerDecision(
 
   setTimer(state, "Merger", "MERGER");
   return { ok: true };
+}
+
+export function getMergerAllocationSummary(
+  state: GameState,
+  playerId: number,
+  trade: number,
+  sell: number
+): {
+  ok: boolean;
+  error?: string;
+  have: number;
+  maxTradeIn: number;
+  tradeIn: number;
+  tradeOut: number;
+  sell: number;
+  keep: number;
+  tradeDisabled: boolean;
+} {
+  const modal = state.ui.modal;
+  if (!modal || modal.kind !== "MERGER") {
+    return {
+      ok: false,
+      error: "No active merger.",
+      have: 0,
+      maxTradeIn: 0,
+      tradeIn: 0,
+      tradeOut: 0,
+      sell: 0,
+      keep: 0,
+      tradeDisabled: true,
+    };
+  }
+
+  const ctx = modal.ctx;
+  const survivor = ctx.survivor!;
+  const acquiredFirmId = ctx.acquired[ctx.acquiredIndex];
+  const p = state.players[playerId];
+  const have = p.shares[acquiredFirmId];
+  const survivingBankShares = state.firms[survivor].bankShares;
+  const maxTradeIn = Math.min(have, survivingBankShares * 2);
+  const tradeDisabled = survivingBankShares <= 0 || have < 2;
+
+  if (!Number.isInteger(trade) || !Number.isInteger(sell)) {
+    return { ok: false, error: "Trade and sell must be whole shares.", have, maxTradeIn, tradeIn: 0, tradeOut: 0, sell: 0, keep: have, tradeDisabled };
+  }
+  if (trade < 0 || sell < 0) {
+    return { ok: false, error: "Negative values.", have, maxTradeIn, tradeIn: 0, tradeOut: 0, sell: 0, keep: have, tradeDisabled };
+  }
+  if (trade > maxTradeIn) {
+    return { ok: false, error: "Trade exceeds available shares.", have, maxTradeIn, tradeIn: 0, tradeOut: 0, sell: 0, keep: have, tradeDisabled };
+  }
+  if (trade % 2 !== 0) {
+    return { ok: false, error: "Trade must be even (2-for-1).", have, maxTradeIn, tradeIn: 0, tradeOut: 0, sell: 0, keep: have, tradeDisabled };
+  }
+
+  const remainingAfterTrade = have - trade;
+  if (sell > remainingAfterTrade) {
+    return { ok: false, error: "Sell exceeds remaining shares.", have, maxTradeIn, tradeIn: 0, tradeOut: 0, sell: 0, keep: have, tradeDisabled };
+  }
+
+  const keep = remainingAfterTrade - sell;
+  return {
+    ok: true,
+    have,
+    maxTradeIn,
+    tradeIn: trade,
+    tradeOut: trade / 2,
+    sell,
+    keep,
+    tradeDisabled,
+  };
 }
 
 function finalizeMerger(state: GameState, ctx: MergerCtx): void {
