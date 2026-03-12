@@ -724,20 +724,20 @@ export function applyMergerDecision(
   const have = p.shares[acquiredFirmId];
 
   if (trade < 0 || sell < 0) return { ok: false, error: "Negative values." };
-  if (trade + sell > have) return { ok: false, error: "Exceeds holdings." };
+  if (!Number.isInteger(trade) || !Number.isInteger(sell)) return { ok: false, error: "Whole shares only." };
+  if (trade > have) return { ok: false, error: "Trade exceeds holdings." };
+  if (trade % 2 !== 0) return { ok: false, error: "Trade amount must be even." };
 
-  // trade is number of acquired shares to trade in (must be even count in effect; we allow any and floor)
-  const tradeIn = trade;
-  const tradeOutWanted = Math.floor(tradeIn / 2);
+  const tradeOutWanted = trade / 2;
+  if (tradeOutWanted > 0 && survFirm.bankShares === 0) return { ok: false, error: "No survivor shares available for trade." };
+  if (tradeOutWanted > survFirm.bankShares) return { ok: false, error: "Trade exceeds available survivor bank shares." };
 
-  const tradeOut = Math.min(tradeOutWanted, survFirm.bankShares);
-  if (tradeOut < tradeOutWanted) ctx.currentTotals.tradeCapped = true;
+  const remainingAfterTrade = have - trade;
+  if (sell > remainingAfterTrade) return { ok: false, error: "Sell exceeds remaining holdings." };
 
-  // consume shares
-  const consumedTradeIn = tradeOut * 2;
-  const remainingAfterTrade = have - consumedTradeIn;
-
-  const sellActual = Math.min(sell, remainingAfterTrade);
+  const consumedTradeIn = trade;
+  const tradeOut = tradeOutWanted;
+  const sellActual = sell;
   const held = have - consumedTradeIn - sellActual;
 
   // apply holdings changes
